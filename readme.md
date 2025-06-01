@@ -33,7 +33,7 @@ You can run ChronoType either from its source code or by using the pre-built exe
 1.  **Ensure Prerequisites:** Make sure you have Go and Git installed on your Windows system.
 2.  **Clone the Repository:** Open a terminal or Command Prompt and run:
     ```bash
-    git clone [https://github.com/mohammadhasanii/ChronoType.git](https://github.com/mohammadhasanii/ChronoType.git)
+    git clone https://github.com/mohammadhasanii/ChronoType.git
     ```
 3.  **Navigate to Project Directory:**
     ```bash
