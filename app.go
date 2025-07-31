@@ -209,6 +209,9 @@ type APIResponseData struct {
 	TotalDays  int          `json:"total_days"`
 	TotalKeys  int          `json:"total_keys"`
 	Stats      []DailyStats `json:"stats"`
+	Page       int          `json:"page"`
+	PageSize   int          `json:"page_size"`
+	TotalPages int          `json:"total_pages"`
 }
 
 const htmlTemplate = `
@@ -291,6 +294,26 @@ const htmlTemplate = `
             </div>
         </div>
         
+        <div class="flex flex-col sm:flex-row justify-between items-center mb-4 gap-2">
+            <div>
+                <label for="rangeSelect" class="font-medium text-sm mr-2">Show Range:</label>
+                <select id="rangeSelect" class="p-2 rounded-md border border-gray-300 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-gray-700 dark:text-gray-200">
+                    <option value="7">Last 7 Days</option>
+                    <option value="15">Last 15 Days</option>
+                    <option value="30">Last 30 Days</option>
+                    <option value="90">Last 3 Months</option>
+                    <option value="180">Last 6 Months</option>
+                    <option value="365">Last 1 Year</option>
+                    <option value="all">All</option>
+                </select>
+            </div>
+            <div id="paginationControls" class="flex items-center gap-2">
+                <button id="prevPageBtn" class="px-3 py-1 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-sm">Prev</button>
+                <span id="pageInfo" class="text-sm font-medium"></span>
+                <button id="nextPageBtn" class="px-3 py-1 rounded bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 text-sm">Next</button>
+            </div>
+        </div>
+
         <div class="data-table-container bg-gray-50 dark:bg-gray-800 p-0 sm:p-2 rounded-lg shadow-md overflow-x-auto">
             <h2 class="text-lg sm:text-xl font-semibold text-center my-3 text-gray-700 dark:text-gray-200">Detailed Daily Log</h2>
             <table class="min-w-full text-sm text-left">
@@ -304,26 +327,19 @@ const htmlTemplate = `
                     </tr>
                 </thead>
                 <tbody id="statsTableBody">
-                    {{range .InitialStatsForTable}}
-                    <tr class="border-b border-gray-200 dark:border-gray-700 hover:bg-gray-100 dark:hover:bg-gray-700/50 transition-colors">
-                        <td class="p-3 whitespace-nowrap">{{.Date}}</td>
-                        <td class="p-3 whitespace-nowrap">{{.TotalKeystrokes}}</td>
-                        <td class="p-3 whitespace-nowrap">{{printf "%.2f" .AvgPerMinute}}</td>
-                        <td class="p-3 whitespace-nowrap">{{.ActiveMinutes}}</td>
-                        <td class="p-3 whitespace-nowrap font-medium
-                            {{if gt .AvgPerMinute 100.0}}text-red-500 dark:text-red-400{{else if gt .AvgPerMinute 50.0}}text-yellow-500 dark:text-yellow-400{{else if gt .AvgPerMinute 20.0}}text-green-500 dark:text-green-400{{else}}text-blue-500 dark:text-blue-400{{end}}">
-                            {{if gt .AvgPerMinute 100.0}}Very High{{else if gt .AvgPerMinute 50.0}}High{{else if gt .AvgPerMinute 20.0}}Moderate{{else}}Low{{end}}
-                        </td>
-                    </tr>
-                    {{end}}
+                    <!-- Table will be filled by JavaScript -->
                 </tbody>
             </table>
         </div>
     </div>
     
     <script>
-        let statsData = {{.StatsJSONForInitialRender}}; 
+        let statsData = {{.StatsJSONForInitialRender}};
         let dailyChartInstance, avgChartInstance;
+        let currentRange = '7';
+        let currentPage = 1;
+        let pageSize = 10;
+        let totalPages = 1;
 
         function getChartColors() {
             const isDarkMode = document.documentElement.classList.contains('dark');
@@ -411,7 +427,12 @@ const htmlTemplate = `
 
         async function updateDashboardData() {
             try {
-                const response = await fetch('/api/all-stats');
+                const params = new URLSearchParams({
+                    range: currentRange,
+                    page: currentPage,
+                    page_size: pageSize
+                });
+                const response = await fetch('/api/all-stats?' + params.toString());
                 if (!response.ok) {
                     console.error('Failed to fetch stats:', response.status);
                     return;
@@ -428,16 +449,44 @@ const htmlTemplate = `
                 document.getElementById('totalDaysStat').textContent = data.total_days;
                 document.getElementById('totalKeysStat').textContent = data.total_keys;
 
-                statsData = data.stats; 
+                statsData = data.stats;
                 renderCharts();
                 updateTable(data.stats);
+
+                // Pagination
+                currentPage = data.page;
+                totalPages = data.total_pages;
+                document.getElementById('pageInfo').textContent = "Page " + currentPage + " of " + totalPages;
+                document.getElementById('prevPageBtn').disabled = currentPage <= 1;
+                document.getElementById('nextPageBtn').disabled = currentPage >= totalPages;
 
             } catch (error) {
                 console.error('Error updating dashboard data:', error);
             }
         }
-        
-        renderCharts(); 
+
+        document.getElementById('rangeSelect').addEventListener('change', function() {
+            currentRange = this.value;
+            currentPage = 1;
+            updateDashboardData();
+        });
+
+        document.getElementById('prevPageBtn').addEventListener('click', function() {
+            if (currentPage > 1) {
+                currentPage--;
+                updateDashboardData();
+            }
+        });
+
+        document.getElementById('nextPageBtn').addEventListener('click', function() {
+            if (currentPage < totalPages) {
+                currentPage++;
+                updateDashboardData();
+            }
+        });
+
+        renderCharts();
+        updateDashboardData();
         setInterval(updateDashboardData, 10000);
 
     </script>
@@ -457,12 +506,14 @@ func main() {
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		allDailyStats := tracker.getDailyStats()
+		// فقط ۷ روز آخر برای رندر اولیه
+		filteredStats := filterStatsByRange(allDailyStats, "7")
 
 		var totalToday, totalKeys int
 		var avgToday float64
 		todayDate := time.Now().Format("2006-01-02")
 
-		for _, stat := range allDailyStats {
+		for _, stat := range filteredStats {
 			totalKeys += stat.TotalKeystrokes
 			if stat.Date == todayDate {
 				totalToday = stat.TotalKeystrokes
@@ -470,15 +521,15 @@ func main() {
 			}
 		}
 
-		statsJSONBytes, _ := json.Marshal(allDailyStats)
+		statsJSONBytes, _ := json.Marshal(filteredStats)
 
 		pageRenderData := PageData{
 			StatsJSONForInitialRender: template.JS(statsJSONBytes),
 			TotalToday:                totalToday,
 			AvgToday:                  avgToday,
-			TotalDays:                 len(allDailyStats),
+			TotalDays:                 len(filteredStats),
 			TotalKeys:                 totalKeys,
-			InitialStatsForTable:      allDailyStats,
+			InitialStatsForTable:      filteredStats,
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -490,11 +541,27 @@ func main() {
 
 	http.HandleFunc("/api/all-stats", func(w http.ResponseWriter, r *http.Request) {
 		allDailyStats := tracker.getDailyStats()
+		rangeStr := r.URL.Query().Get("range")
+		if rangeStr == "" {
+			rangeStr = "7"
+		}
+		page := 1
+		pageSize := 10
+		if p := r.URL.Query().Get("page"); p != "" {
+			fmt.Sscanf(p, "%d", &page)
+		}
+		if ps := r.URL.Query().Get("page_size"); ps != "" {
+			fmt.Sscanf(ps, "%d", &pageSize)
+		}
+
+		filteredStats := filterStatsByRange(allDailyStats, rangeStr)
+		pagedStats, totalPages := paginateStats(filteredStats, page, pageSize)
+
 		var totalToday, totalKeys int
 		var avgToday float64
 		todayDate := time.Now().Format("2006-01-02")
 
-		for _, stat := range allDailyStats {
+		for _, stat := range filteredStats {
 			totalKeys += stat.TotalKeystrokes
 			if stat.Date == todayDate {
 				totalToday = stat.TotalKeystrokes
@@ -504,9 +571,12 @@ func main() {
 		response := APIResponseData{
 			TotalToday: totalToday,
 			AvgToday:   avgToday,
-			TotalDays:  len(allDailyStats),
+			TotalDays:  len(filteredStats),
 			TotalKeys:  totalKeys,
-			Stats:      allDailyStats,
+			Stats:      pagedStats,
+			Page:       page,
+			PageSize:   pageSize,
+			TotalPages: totalPages,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
@@ -514,4 +584,59 @@ func main() {
 
 	fmt.Println("ChronoType server active on http://localhost:8080")
 	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+func filterStatsByRange(stats []DailyStats, rangeStr string) []DailyStats {
+	if rangeStr == "all" {
+		return stats
+	}
+	var days int
+	switch rangeStr {
+	case "7":
+		days = 7
+	case "15":
+		days = 15
+	case "30":
+		days = 30
+	case "90":
+		days = 90
+	case "180":
+		days = 180
+	case "365":
+		days = 365
+	default:
+		days = 7
+	}
+	cutoff := time.Now().AddDate(0, 0, -days)
+	var filtered []DailyStats
+	for _, stat := range stats {
+		statDate, err := time.Parse("2006-01-02", stat.Date)
+		if err == nil && statDate.After(cutoff) {
+			filtered = append(filtered, stat)
+		}
+	}
+	return filtered
+}
+
+func paginateStats(stats []DailyStats, page, pageSize int) ([]DailyStats, int) {
+	total := len(stats)
+	if pageSize <= 0 {
+		pageSize = 10
+	}
+	totalPages := (total + pageSize - 1) / pageSize
+	if page < 1 {
+		page = 1
+	}
+	if page > totalPages {
+		page = totalPages
+	}
+	start := (page - 1) * pageSize
+	end := start + pageSize
+	if start > total {
+		start = total
+	}
+	if end > total {
+		end = total
+	}
+	return stats[start:end], totalPages
 }

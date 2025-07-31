@@ -2,7 +2,8 @@
 
 **GitHub Repository:** [https://github.com/mohammadhasanii/ChronoType](https://github.com/mohammadhasanii/ChronoType)
 
-![ChronoType Showcase](./demo.png)
+![ChronoType DarkMode](./DarkMode.png)
+![ChronoType LightMode](./LightMode.png)
 
 ChronoType is a Windows desktop application that monitors your keyboard activity, providing daily statistics and visualizations of your typing patterns through a local web interface.
 
